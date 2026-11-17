@@ -12,7 +12,7 @@
  - 단가 정정/차액 건은 업로드에서 빼고 '확인필요' 시트로
  - Z- 코드(매출할인 등 비재고 품목)는 제외
  - 반품(마이너스 수량), 무상(0원) 출고는 그대로 반영
- - 생산품만 반영: 재고 ERP 품목등록에 있는 품목 (없으면 회계 ERP 품목구분 [제품])
+ - 생산품만 반영: 회계 ERP 품목구분 [제품]
  - 품목코드는 매핑표가 있으면 재고 ERP 코드로 변환
 """
 import argparse, re, sys, os
@@ -117,8 +117,8 @@ def main():
         if l['code'].upper().startswith('Z-'):
             review.append((l, '매출할인 등 비재고 품목 - 제외')); continue
         code = cmap.get((l['entity'], l['code']), l['code'])
-        # 생산품만 재고 ERP에 기록: 재고 ERP 품목등록이 있으면 그 기준, 없으면 회계 ERP 품목구분이 [제품]인 것
-        if stock is None and kind and kind.get((l['entity'], l['code'])) != '[제품]':
+        # 생산품만 재고 ERP에 기록: 회계 ERP 품목구분이 [제품]인 것
+        if kind and kind.get((l['entity'], l['code'])) != '[제품]':
             skipped.append(l); continue
         if stock is not None and code not in stock:
             review.append((l, f'재고 ERP에 없는 품목코드: {code} (매핑표에 추가 필요)')); continue
