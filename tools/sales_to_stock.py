@@ -7,7 +7,8 @@
 
 규칙
  - 일자: 회계 ERP 판매일자 그대로 (이월 건도 회계 날짜로 이동, 비고는 적요에 그대로 남김)
- - 거래처명: 회계 ERP 거래처명 그대로 / 출하창고: 2차공장 / 단가·금액: 0
+ - 거래처: 회계 ERP 거래처코드로 연결(재고 ERP도 같은 코드) / 담당자: 남경→공혜진, 이엔지→남경이엔지
+ - 출하창고: 2차공장 / 단가·금액: 0
  - 법인 간 내부거래(상대 법인 거래처)는 제외 → '제외_내부거래' 시트
  - 단가 정정/차액 건은 업로드에서 빼고 '확인필요' 시트로
  - Z- 코드(매출할인 등 비재고 품목)는 제외
@@ -25,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ecount_xlsx import read_rows
 
 WAREHOUSE = '2차공장'
+MANAGER = {'남경': '공혜진', '이엔지': '남경이엔지'}
 INTERNAL = {'남경': {'남경이엔지'}, '이엔지': {'주남경', '(주)남경', '남경'}}
 PRICE_FIX = re.compile(r'단가\s*(차액|수정|정정|변경)|차액분|금액\s*(수정|정정)')
 TEMPLATE = ['일자', '순번', '거래처코드', '거래처명', '담당자', '출하창고', '거래유형', '통화', '환율',
@@ -47,6 +49,7 @@ def load_sales(path, entity):
     col = lambda *names: next(h.index(n) for n in names if n in h)
     ci = dict(date=0, cust=col('검색창내용', '거래처명'), item=col('품명 및 규격'), qty=col('수량'),
               memo=col('비고', '적요'), code=col('품목코드코드', '품목코드'))
+    ccode = next((h.index(n) for n in ('거래처코드', '거래처코드코드') if n in h), None)
     out = []
     for r in rows[header + 1:]:
         r = r + [None] * (len(h) - len(r))
@@ -55,7 +58,8 @@ def load_sales(path, entity):
             continue  # 월계/총합계/출력일시 행
         out.append(dict(entity=entity, date=d, slip=no, cust=(r[ci['cust']] or '').strip(),
                         item=r[ci['item']], qty=r[ci['qty']] or 0, memo=r[ci['memo']] or '',
-                        code=str(r[ci['code']] or '').strip()))
+                        code=str(r[ci['code']] or '').strip(),
+                        cust_code=str(r[ccode] or '').strip() if ccode is not None else ''))
     return out
 
 
@@ -79,12 +83,33 @@ def load_stock_items(path):
     return {str(r[0]).strip() for r in rows[header + 1:] if r and r[0]}
 
 
+def load_customers(path):
+    """거래처등록 엑셀 → (코드→행, 검색창내용/거래처명→[코드])"""
+    if not path:
+        return {}, {}
+    rows = read_rows(path)
+    hi = next(i for i, r in enumerate(rows) if r and r[0] == '거래처코드')
+    h = rows[hi]
+    by_code, by_key = {}, {}
+    for r in rows[hi + 1:]:
+        if not r or not r[0] or len(r) < 2:
+            continue
+        d = dict(zip(h, r + [None] * (len(h) - len(r))))
+        c = str(d['거래처코드']).strip(); by_code[c] = d
+        for k in {d.get('검색창내용'), d.get('거래처명')}:
+            if k: by_key.setdefault(str(k).strip(), []).append(c)
+    return by_code, by_key
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--namkyung'); ap.add_argument('--eng')
     ap.add_argument('--map'); ap.add_argument('--stock-items')
     ap.add_argument('--items-namkyung', help='남경 회계 ERP 품목등록 (품목구분으로 생산품 판별)')
     ap.add_argument('--items-eng', help='이엔지 회계 ERP 품목등록')
+    ap.add_argument('--cust-namkyung', help='남경 회계 ERP 거래처등록')
+    ap.add_argument('--cust-eng', help='이엔지 회계 ERP 거래처등록')
+    ap.add_argument('--stock-cust', help='재고 ERP 거래처등록')
     ap.add_argument('--from', dest='dfrom'); ap.add_argument('--to', dest='dto')
     ap.add_argument('-o', '--out', required=True)
     a = ap.parse_args()
@@ -104,6 +129,9 @@ def main():
             for r in rows[hi + 1:]:
                 if r and r[0] and len(r) > ki: kind[(e, str(r[0]).strip())] = r[ki]
     skipped = []
+    cust = {'남경': load_customers(a.cust_namkyung), '이엔지': load_customers(a.cust_eng)}
+    stock_cust = load_customers(a.stock_cust)[0] if a.stock_cust else None
+    new_cust = {}
 
     upload, internal, review = [], [], []
     seq, seqmap = 0, {}
@@ -122,11 +150,21 @@ def main():
             skipped.append(l); continue
         if stock is not None and code not in stock:
             review.append((l, f'재고 ERP에 없는 품목코드: {code} (매핑표에 추가 필요)')); continue
+        # 거래처: 회계 ERP 거래처코드로 연결 (재고 ERP가 같은 코드를 씀)
+        cc = l['cust_code']
+        if not cc and cust[l['entity']][1]:
+            cands = cust[l['entity']][1].get(l['cust'], [])
+            if len(set(cands)) != 1:
+                review.append((l, f"거래처 특정 불가: '{l['cust']}' 후보 {len(set(cands))}개 (판매현황에 거래처코드 열 추가 권장)")); continue
+            cc = cands[0]
+        if cc and stock_cust is not None and cc not in stock_cust:
+            new_cust[cc] = cust[l['entity']][0].get(cc, {'거래처코드': cc, '거래처명': l['cust']})
         key = (l['entity'], l['date'], l['slip'])
         if key not in seqmap:
             seq += 1; seqmap[key] = seq
         memo = f"{l['entity']} {l['date']:%y/%m/%d}-{l['slip']}" + (f" | {l['memo']}" if l['memo'] else '')
-        upload.append([l['date'].strftime('%Y%m%d'), seqmap[key], None, l['cust'], None, WAREHOUSE,
+        upload.append([l['date'].strftime('%Y%m%d'), seqmap[key], cc or None, None if cc else l['cust'],
+                       MANAGER[l['entity']], WAREHOUSE,
                        None, None, None, code, None, None, l['qty'], 0, None, 0, 0, memo[:200], None])
 
     wb = openpyxl.Workbook()
@@ -146,6 +184,9 @@ def main():
     row = lambda l: [l['entity'], f"{l['date']:%Y-%m-%d}-{l['slip']}", l['cust'], l['code'], l['item'], l['qty'], l['memo']]
     hdr = ['법인', '전표', '거래처', '품목코드', '품명 및 규격', '수량', '비고']
     sheet(wb.create_sheet('확인필요'), ['사유'] + hdr, [[why] + row(l) for l, why in review], [40, 6, 14, 24, 14, 40, 8, 30])
+    if new_cust:
+        sheet(wb.create_sheet('재고ERP_거래처추가'), ['거래처코드', '거래처명', '대표자명'],
+              [[c, d.get('거래처명'), d.get('대표자명')] for c, d in new_cust.items()], [16, 36, 12])
     sheet(wb.create_sheet('제외_내부거래'), hdr, [row(l) for l in internal], [6, 14, 14, 14, 40, 8, 30])
     s = wb.create_sheet('요약')
     for e in ('남경', '이엔지'):
@@ -154,8 +195,9 @@ def main():
     s.append(['업로드 줄', len(upload)]); s.append(['업로드 전표', seq])
     s.append(['상품(매입품) 제외', len(skipped)])
     s.append(['내부거래 제외', len(internal)]); s.append(['확인필요', len(review)])
+    s.append(['재고 ERP에 먼저 등록할 거래처', len(new_cust)])
     wb.save(a.out)
-    print(f'업로드 {len(upload)}줄/{seq}전표, 상품 제외 {len(skipped)}, 내부거래 제외 {len(internal)}, 확인필요 {len(review)} → {a.out}')
+    print(f'업로드 {len(upload)}줄/{seq}전표, 상품 제외 {len(skipped)}, 내부거래 제외 {len(internal)}, 확인필요 {len(review)}, 신규거래처 {len(new_cust)} → {a.out}')
 
 
 if __name__ == '__main__':
