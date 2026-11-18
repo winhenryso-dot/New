@@ -1,0 +1,491 @@
+<title>남경 재고 변환기</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* 레이아웃: 위에서 아래로 한 줄 작업 흐름 (파일 놓기 → 결과 요약 → 내보내기 → 세부 목록) */
+:root {
+  --bg: #f5f7f6; --surface: #ffffff; --ink: #18221f; --muted: #5d6b66; --line: #d9e1de;
+  --accent: #0f6e5a; --accent-ink: #ffffff; --accent-soft: #e2f1ec;
+  --warn: #9a5b00; --warn-soft: #fdf1dc; --bad: #b3261e; --bad-soft: #fbe7e5; --ok: #1d7a3e;
+  --f-body: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111816; --surface: #19221f; --ink: #e5ece9; --muted: #96a6a0; --line: #2b3733;
+  --accent: #4cc3a3; --accent-ink: #0b1714; --accent-soft: #1b3330;
+  --warn: #f0b350; --warn-soft: #33281a; --bad: #f2867d; --bad-soft: #3a1f1d; --ok: #6fd193; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111816; --surface: #19221f; --ink: #e5ece9; --muted: #96a6a0; --line: #2b3733;
+  --accent: #4cc3a3; --accent-ink: #0b1714; --accent-soft: #1b3330;
+  --warn: #f0b350; --warn-soft: #33281a; --bad: #f2867d; --bad-soft: #3a1f1d; --ok: #6fd193; color-scheme: dark }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-block: 28px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 22px; }
+h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 1.05rem; margin: 0; }
+.sub { color: var(--muted); margin: 4px 0 0; max-width: 65ch; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.drop { border: 2px dashed var(--line); border-radius: var(--r); padding: 22px 16px; text-align: center; cursor: pointer; background: var(--bg); transition: border-color .15s, background .15s; }
+.drop:hover, .drop.over, .drop:focus-visible { border-color: var(--accent); background: var(--accent-soft); outline: none; }
+.drop strong { display: block; font-size: 1.05rem; }
+.drop span { color: var(--muted); font-size: .9rem; }
+.slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
+.slot { display: flex; gap: 10px; align-items: flex-start; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.slot .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 7px; flex: none; background: var(--line); }
+.slot.ok .dot { background: var(--ok); } .slot.need .dot { background: var(--bad); }
+.slot .t { font-weight: 500; font-size: .92rem; }
+.slot .d { color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.between { justify-content: space-between; }
+button { font: inherit; border-radius: 8px; padding: 9px 16px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+label.inline { display: flex; gap: 6px; align-items: center; font-size: .9rem; color: var(--muted); }
+input[type=date] { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.stat b { display: block; font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: .85rem; }
+.stat.main { background: var(--accent-soft); border-color: transparent; }
+.stat.main b { color: var(--accent); }
+.stat.warn { background: var(--warn-soft); border-color: transparent; } .stat.warn b { color: var(--warn); }
+.stat.bad { background: var(--bad-soft); border-color: transparent; } .stat.bad b { color: var(--bad); }
+.note { font-size: .88rem; color: var(--muted); margin: 0; }
+.msg { padding: 10px 12px; border-radius: 8px; font-size: .92rem; }
+.msg.warn { background: var(--warn-soft); color: var(--warn); }
+.msg.bad { background: var(--bad-soft); color: var(--bad); }
+.msg.ok { background: var(--accent-soft); color: var(--accent); }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line); }
+.tab { border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 12px; background: none; color: var(--muted); }
+.tab[aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 700; }
+.tab .n { font-family: var(--f-mono); font-size: .8rem; margin-left: 4px; }
+.tablebox { overflow-x: auto; max-height: 520px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { position: sticky; top: 0; background: var(--surface); font-weight: 500; color: var(--muted); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.code, .mono { font-family: var(--f-mono); font-size: .8rem; }
+td.wrap { white-space: normal; min-width: 220px; }
+tr.neg td.num { color: var(--bad); }
+.pill { display: inline-block; font-size: .75rem; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.pill.e { background: var(--warn-soft); color: var(--warn); }
+details summary { cursor: pointer; font-weight: 500; }
+details ol { margin: 8px 0 0; padding-left: 20px; color: var(--muted); font-size: .9rem; display: grid; gap: 4px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>남경 재고 변환기</h1>
+    <p class="sub">(주)남경·남경이엔지 회계 ERP 판매현황을 재고 ERP <b>판매입력 → 웹자료올리기</b> 양식으로 바꿉니다. 생산품([제품])만 남기고, 법인 간 거래와 매출할인은 뺍니다. 파일은 이 브라우저 안에서만 읽고 어디로도 보내지 않습니다.</p>
+  </header>
+
+  <section class="panel" aria-labelledby="h-files">
+    <div class="row between">
+      <h2 id="h-files">파일 넣기</h2>
+      <button id="clearRef" type="button">기준자료 지우기</button>
+    </div>
+    <div class="drop" id="drop" tabindex="0" role="button" aria-describedby="drop-help">
+      <strong>엑셀 파일을 여기에 끌어다 놓거나 눌러서 고르세요</strong>
+      <span id="drop-help">여러 개를 한 번에 넣어도 됩니다. 회사명과 열 이름으로 어떤 파일인지 알아서 구분합니다.</span>
+      <input type="file" id="file" accept=".xlsx,.xls" multiple hidden>
+    </div>
+    <div>
+      <p class="note" style="margin-bottom:8px"><b>매일</b> 넣는 파일</p>
+      <div class="slots" id="slotsDaily"></div>
+    </div>
+    <div>
+      <p class="note" style="margin-bottom:8px"><b>기준자료</b> · 한 번 넣으면 이 브라우저에 기억합니다. 품목이나 거래처가 새로 생겼을 때만 다시 넣으세요.</p>
+      <div class="slots" id="slotsRef"></div>
+    </div>
+    <div id="fileMsg"></div>
+  </section>
+
+  <section class="panel" id="result" aria-labelledby="h-res" hidden>
+    <div class="row between">
+      <h2 id="h-res">변환 결과</h2>
+      <div class="row">
+        <label class="inline" for="dFrom">기간 <input type="date" id="dFrom"></label>
+        <label class="inline" for="dTo">~ <input type="date" id="dTo"></label>
+      </div>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div id="resMsg"></div>
+    <div class="row">
+      <button class="primary" id="btnSave" type="button">업로드용 엑셀 저장</button>
+      <button id="btnCopy" type="button">붙여넣기용 복사</button>
+      <span class="note" id="exportNote"></span>
+    </div>
+    <div class="tabs" role="tablist" id="tabs"></div>
+    <div class="tablebox" id="tableBox"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-how">
+    <details>
+      <summary id="h-how">사용 순서</summary>
+      <ol>
+        <li>회계 ERP 두 곳에서 <b>판매현황</b>을 엑셀로 받습니다. 하루치면 그날 날짜만, 기간이 겹치면 위 기간 칸으로 좁힙니다.</li>
+        <li>두 파일을 위 칸에 넣습니다. 처음 한 번은 기준자료 7개(매핑표, 품목등록 3개, 거래처등록 3개)도 함께 넣습니다.</li>
+        <li><b>신규 거래처</b> 탭에 항목이 있으면 재고 ERP 거래처등록에 먼저 등록합니다.</li>
+        <li><b>업로드용 엑셀 저장</b> 또는 <b>붙여넣기용 복사</b> 후, 재고 ERP 판매입력 → 웹자료올리기에 올립니다.</li>
+        <li><b>확인 필요</b> 탭의 줄은 자동으로 넣지 않았습니다. 필요하면 손으로 입력하고, 품목 연결이 없던 것은 매핑표에 추가해 다시 넣습니다.</li>
+      </ol>
+    </details>
+  </section>
+</div>
+
+<script id="core">
+/* ---------- 변환 규칙 (python tools/sales_to_stock.py 와 같은 규칙) ---------- */
+const RULES = {
+  warehouse: '2차공장',
+  manager: { '남경': '공혜진', '이엔지': '남경이엔지' },
+  internal: { '남경': ['남경이엔지'], '이엔지': ['주남경', '(주)남경', '남경'] },
+  priceFix: /단가\s*(차액|수정|정정|변경)|차액분|금액\s*(수정|정정)/,
+};
+const TEMPLATE = ['일자','순번','거래처코드','거래처명','담당자','출하창고','거래유형','통화','환율','품목코드','품목명','규격','수량','단가','외화공급가액','공급가액','부가세','적요','생산전표생성'];
+const norm = t => String(t ?? '').replace(/[\s,]/g, '').toUpperCase();
+const str = v => (v === null || v === undefined) ? '' : String(v).trim();
+
+function entityOf(title) {
+  const t = str(title);
+  if (t.includes('이엔지')) return '이엔지';
+  if (t.includes('남경')) return '남경';
+  return null;
+}
+function headerIndex(rows, first) { return rows.findIndex(r => r && str(r[0]) === first); }
+
+/* 엑셀 행 배열(rows: 2차원) → {kind, entity, data} */
+function classify(rows, filename) {
+  const title = str(rows[0] && rows[0][0]);
+  const ent = entityOf(title);
+  if (rows[0] && str(rows[0][0]) === '법인' && rows[0].map(str).includes('재고ERP품목코드'))
+    return { kind: 'map', data: parseMap(rows) };
+  let hi = headerIndex(rows, '일자');
+  if (hi >= 0 && rows[hi].map(str).includes('품명 및 규격')) {
+    if (!ent) throw new Error('회사명을 찾지 못했습니다');
+    return { kind: 'sales', entity: ent, data: parseSales(rows, hi, ent) };
+  }
+  hi = headerIndex(rows, '품목코드');
+  if (hi >= 0) {
+    const h = rows[hi].map(str);
+    if (h.includes('규격정보') || h.includes('품목명[규격]')) return { kind: 'stockItems', data: parseItems(rows, hi, true) };
+    if (h.includes('규격명') && ent) return { kind: 'items', entity: ent, data: parseItems(rows, hi, false) };
+  }
+  hi = headerIndex(rows, '거래처코드');
+  if (hi >= 0) {
+    const h = rows[hi].map(str);
+    if (h.includes('업태') && ent) return { kind: 'cust', entity: ent, data: parseCust(rows, hi) };
+    return { kind: 'stockCust', data: parseCust(rows, hi) };
+  }
+  if (headerIndex(rows, '일자-No.') >= 0) throw new Error('재고 ERP 판매현황은 여기서 쓰지 않습니다');
+  throw new Error('알 수 없는 양식입니다');
+}
+
+function parseDate(s) {
+  const m = /^(\d{2,4})\/(\d{1,2})\/(\d{1,2})\s*-\s*(\d+)/.exec(str(s));
+  if (!m) return null;
+  let y = +m[1]; if (y < 100) y += 2000;
+  const iso = `${y}-${String(+m[2]).padStart(2,'0')}-${String(+m[3]).padStart(2,'0')}`;
+  return { iso, slip: +m[4] };
+}
+function parseSales(rows, hi, entity) {
+  const h = rows[hi].map(str);
+  const col = (...names) => { for (const n of names) { const i = h.indexOf(n); if (i >= 0) return i; } return -1; };
+  const ci = { cust: col('검색창내용','거래처명'), item: col('품명 및 규격'), qty: col('수량'), memo: col('비고','적요'),
+               code: col('품목코드코드','품목코드'), ccode: col('거래처코드','거래처코드코드') };
+  const out = [];
+  for (const r of rows.slice(hi + 1)) {
+    const d = r && parseDate(r[0]);
+    if (!d) continue;
+    out.push({ entity, date: d.iso, slip: d.slip, cust: str(r[ci.cust]), item: str(r[ci.item]),
+      qty: Number(r[ci.qty]) || 0, memo: ci.memo >= 0 ? str(r[ci.memo]) : '', code: str(r[ci.code]),
+      custCode: ci.ccode >= 0 ? str(r[ci.ccode]) : '' });
+  }
+  return out;
+}
+function parseItems(rows, hi, isStock) {
+  const h = rows[hi].map(str);
+  const i = n => h.indexOf(n);
+  const out = {};
+  for (const r of rows.slice(hi + 1)) {
+    if (!r || !str(r[0]) || r.length < 2 || r[1] === null) continue;
+    const name = str(r[i('품목명')]);
+    const spec = str(r[isStock ? i('규격정보') : i('규격명')]);
+    const full = isStock && i('품목명[규격]') >= 0 && str(r[i('품목명[규격]')]) ? str(r[i('품목명[규격]')]) : (spec ? `${name} [${spec}]` : name);
+    out[str(r[0])] = { kind: str(r[i('품목구분')]), full };
+  }
+  return out;
+}
+function parseCust(rows, hi) {
+  const h = rows[hi].map(str);
+  const iN = h.indexOf('거래처명'), iS = h.indexOf('검색창내용'), iR = h.indexOf('대표자명');
+  const byCode = {}, byKey = {};
+  for (const r of rows.slice(hi + 1)) {
+    if (!r || !str(r[0]) || r.length < 2) continue;
+    const c = str(r[0]);
+    byCode[c] = { name: str(r[iN]), rep: iR >= 0 ? str(r[iR]) : '' };
+    for (const k of new Set([str(r[iS]), str(r[iN])])) if (k) (byKey[k] ||= []).includes(c) || byKey[k].push(c);
+  }
+  return { byCode, byKey };
+}
+function parseMap(rows) {
+  const h = rows[0].map(str); const iE = h.indexOf('법인'), iA = h.indexOf('법인품목코드'), iS = h.indexOf('재고ERP품목코드');
+  const m = {};
+  for (const r of rows.slice(1)) if (r && str(r[iE]) && str(r[iA]) && str(r[iS])) m[str(r[iE]) + '|' + str(r[iA])] = str(r[iS]);
+  return m;
+}
+
+/* ref: {map, items:{남경,이엔지}, stockItems, cust:{남경,이엔지}, stockCust}  sales: [...lines] */
+function convert(sales, ref, range) {
+  const stockByName = {};
+  for (const [c, it] of Object.entries(ref.stockItems || {})) { const k = norm(it.full); if (!(k in stockByName)) stockByName[k] = c; }
+  const res = { upload: [], review: [], internal: [], skipped: 0, newCust: {}, slips: 0, total: 0 };
+  const seqMap = new Map();
+  const lines = sales.filter(l => (!range.from || l.date >= range.from) && (!range.to || l.date <= range.to))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.entity.localeCompare(b.entity) || a.slip - b.slip);
+  res.total = lines.length;
+  for (const l of lines) {
+    const rv = why => res.review.push({ ...l, why });
+    if (RULES.internal[l.entity].includes(l.cust)) { res.internal.push(l); continue; }
+    if (RULES.priceFix.test(l.memo)) { rv('단가 정정·차액 건 (재고 이동 없음)'); continue; }
+    if (!l.code) { rv('품목코드 없음'); continue; }
+    if (l.code.toUpperCase().startsWith('Z-')) { rv('매출할인 등 재고 없는 품목'); continue; }
+    const it = ref.items[l.entity]?.[l.code];
+    if (!it) { rv('회계 ERP 품목등록에 없는 코드 (새 품목이면 그 법인 품목등록을 다시 넣기)'); continue; }
+    if (it.kind !== '[제품]') { res.skipped++; continue; }
+    let code = ref.map?.[l.entity + '|' + l.code];
+    let how = '매핑표';
+    if (!code) { code = stockByName[norm(it.full)]; how = '이름일치'; }
+    if (!code || !ref.stockItems[code]) { rv('재고 ERP 품목과 연결 안 됨 → 매핑표에 추가'); continue; }
+    let cc = l.custCode;
+    if (!cc) {
+      const cands = ref.cust[l.entity]?.byKey[l.cust] || [];
+      if (cands.length !== 1) { rv(cands.length ? `거래처 후보가 ${cands.length}곳 (${cands.join(', ')})` : '회계 ERP 거래처등록에서 못 찾음'); continue; }
+      cc = cands[0];
+    }
+    if (!ref.stockCust.byCode[cc]) {
+      const a = ref.cust[l.entity]?.byCode[cc] || { name: l.cust, rep: '' };
+      res.newCust[cc] = { code: cc, name: a.name, rep: a.rep, entity: l.entity };
+    }
+    const key = `${l.entity}|${l.date}|${l.slip}`;
+    if (!seqMap.has(key)) seqMap.set(key, seqMap.size + 1);
+    const memo = (`${l.entity} ${l.date.slice(2).replace(/-/g, '/')}-${l.slip}` + (l.memo ? ` | ${l.memo}` : '')).slice(0, 200);
+    res.upload.push({ src: l, how, stockName: ref.stockItems[code].full, custName: ref.stockCust.byCode[cc]?.name || '',
+      row: [l.date.replace(/-/g, ''), seqMap.get(key), cc, '', RULES.manager[l.entity], RULES.warehouse, '', '', '', code, '', '', l.qty, 0, '', 0, 0, memo, ''] });
+  }
+  res.slips = seqMap.size;
+  return res;
+}
+</script>
+
+<script>
+/* ---------- 화면 ---------- */
+const LS_KEY = 'namkyung-stock-ref-v1';
+const REF_SLOTS = [
+  ['map', null, '품목코드 매핑표', '품목코드_매핑표_초안.xlsx'],
+  ['items', '남경', '(주)남경 품목등록', '회계 ERP'],
+  ['items', '이엔지', '남경이엔지 품목등록', '회계 ERP'],
+  ['stockItems', null, '재고 ERP 품목등록', ''],
+  ['cust', '남경', '(주)남경 거래처등록', '회계 ERP'],
+  ['cust', '이엔지', '남경이엔지 거래처등록', '회계 ERP'],
+  ['stockCust', null, '재고 ERP 거래처등록', ''],
+];
+const DAILY_SLOTS = [['sales', '남경', '(주)남경 판매현황', '회계 ERP'], ['sales', '이엔지', '남경이엔지 판매현황', '회계 ERP']];
+const state = { ref: { map: null, items: {}, stockItems: null, cust: {}, stockCust: null, meta: {} }, sales: {}, salesMeta: {}, tab: 'upload', res: null };
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function loadRef() {
+  try { const s = localStorage.getItem(LS_KEY); if (s) state.ref = Object.assign(state.ref, JSON.parse(s)); } catch (e) { /* 저장소 없음 */ }
+}
+function saveRef() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(state.ref)); return true; } catch (e) { return false; }
+}
+function getRef(kind, ent) { const v = state.ref[kind]; return ent ? v?.[ent] : v; }
+function slotKey(kind, ent) { return kind + (ent ? ':' + ent : ''); }
+
+function renderSlots() {
+  const draw = (el, slots, isDaily) => {
+    el.innerHTML = slots.map(([kind, ent, label, hint]) => {
+      const meta = isDaily ? state.salesMeta[ent] : state.ref.meta?.[slotKey(kind, ent)];
+      const has = isDaily ? !!state.sales[ent] : !!getRef(kind, ent);
+      const cls = has ? 'ok' : (isDaily ? '' : 'need');
+      const desc = has ? esc(meta || '불러옴') : (hint ? esc(hint) + ' · 아직 없음' : '아직 없음');
+      return `<div class="slot ${cls}"><span class="dot" aria-hidden="true"></span><div style="min-width:0"><div class="t">${esc(label)}</div><div class="d">${desc}</div></div></div>`;
+    }).join('');
+  };
+  draw($('slotsDaily'), DAILY_SLOTS, true);
+  draw($('slotsRef'), REF_SLOTS, false);
+}
+
+async function handleFiles(files) {
+  const msgs = [];
+  for (const f of files) {
+    try {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null, raw: true });
+      const c = classify(rows, f.name);
+      const when = new Date().toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      if (c.kind === 'sales') {
+        state.sales[c.entity] = c.data;
+        const ds = c.data.map(l => l.date).sort();
+        state.salesMeta[c.entity] = `${c.data.length}줄 · ${ds[0] || '-'} ~ ${ds[ds.length - 1] || '-'}`;
+      } else {
+        if (c.entity) (state.ref[c.kind] ||= {})[c.entity] = c.data; else state.ref[c.kind] = c.data;
+        const n = c.kind === 'map' ? Object.keys(c.data).length : c.kind.includes('ust') ? Object.keys(c.data.byCode).length : Object.keys(c.data).length;
+        (state.ref.meta ||= {})[slotKey(c.kind, c.entity)] = `${n.toLocaleString()}건 · ${when} 넣음`;
+      }
+    } catch (e) {
+      msgs.push(`<div class="msg bad">${esc(f.name)}: ${esc(e.message)}</div>`);
+    }
+  }
+  if (!saveRef()) msgs.push('<div class="msg warn">이 브라우저에 기준자료를 기억하지 못했습니다. 다음에도 기준자료를 함께 넣어 주세요.</div>');
+  $('fileMsg').innerHTML = msgs.join('');
+  renderSlots();
+  resetRange();
+  run();
+}
+
+function resetRange() {
+  const ds = Object.values(state.sales).flat().map(l => l.date).sort();
+  $('dFrom').value = ds[0] || ''; $('dTo').value = ds[ds.length - 1] || '';
+}
+
+function missingRef() {
+  return REF_SLOTS.filter(([k, e]) => k !== 'map' && !getRef(k, e)).map(s => s[2]);
+}
+
+function run() {
+  const sales = Object.values(state.sales).flat();
+  if (!sales.length) { $('result').hidden = true; return; }
+  $('result').hidden = false;
+  const miss = missingRef();
+  if (miss.length) {
+    state.res = null;
+    $('stats').innerHTML = '';
+    $('resMsg').innerHTML = `<div class="msg bad">기준자료가 부족합니다: ${miss.map(esc).join(', ')}. 위 칸에 함께 넣어 주세요.</div>`;
+    $('tabs').innerHTML = ''; $('tableBox').innerHTML = '';
+    $('btnSave').disabled = $('btnCopy').disabled = true;
+    return;
+  }
+  const res = convert(sales, state.ref, { from: $('dFrom').value, to: $('dTo').value });
+  state.res = res;
+  const nNew = Object.keys(res.newCust).length;
+  const stat = (n, t, cls = '') => `<div class="stat ${cls}"><b>${n.toLocaleString()}</b><span>${t}</span></div>`;
+  $('stats').innerHTML = stat(res.upload.length, `업로드 줄 · ${res.slips}전표`, 'main')
+    + stat(res.review.length, '확인 필요', res.review.length ? 'warn' : '')
+    + stat(nNew, '신규 거래처 (먼저 등록)', nNew ? 'bad' : '')
+    + stat(res.internal.length, '법인 간 거래 제외')
+    + stat(res.skipped, '상품(매입품) 제외');
+  const ents = Object.keys(state.sales);
+  const msgs = [];
+  if (ents.length < 2) msgs.push(`<div class="msg warn">${ents[0] === '남경' ? '남경이엔지' : '(주)남경'} 판매현황이 아직 없습니다. 한 법인만 변환합니다.</div>`);
+  if (!state.ref.map) msgs.push('<div class="msg warn">매핑표가 없어 품목명이 똑같은 품목만 연결했습니다. 매핑표를 넣으면 연결되는 품목이 늘어납니다.</div>');
+  if (nNew) msgs.push(`<div class="msg bad">재고 ERP에 없는 거래처가 ${nNew}곳 있습니다. 업로드 전에 재고 ERP 거래처등록에 먼저 추가하세요.</div>`);
+  $('resMsg').innerHTML = msgs.join('');
+  $('btnSave').disabled = $('btnCopy').disabled = !res.upload.length;
+  $('exportNote').textContent = '';
+  renderTabs();
+}
+
+const TABS = [
+  ['upload', '업로드', r => r.upload.length],
+  ['review', '확인 필요', r => r.review.length],
+  ['newCust', '신규 거래처', r => Object.keys(r.newCust).length],
+  ['internal', '법인 간 거래', r => r.internal.length],
+];
+function renderTabs() {
+  const r = state.res;
+  $('tabs').innerHTML = TABS.map(([k, t, n]) => `<button class="tab" role="tab" type="button" data-tab="${k}" aria-selected="${state.tab === k}">${t}<span class="n">${n(r)}</span></button>`).join('');
+  renderTable();
+}
+function renderTable() {
+  const r = state.res; let head, body;
+  const ent = e => `<span class="pill ${e === '이엔지' ? 'e' : ''}">${e}</span>`;
+  if (state.tab === 'upload') {
+    head = ['일자', '순번', '법인', '거래처', '재고 품목코드', '재고 품목명', '수량', '연결', '적요'];
+    body = r.upload.map(u => `<tr class="${u.row[12] < 0 ? 'neg' : ''}"><td class="code">${u.row[0]}</td><td class="num">${u.row[1]}</td><td>${ent(u.src.entity)}</td><td>${esc(u.custName || u.src.cust)}<div class="note mono">${esc(u.row[2])}</div></td><td class="code">${esc(u.row[9])}</td><td class="wrap">${esc(u.stockName)}</td><td class="num">${u.row[12].toLocaleString()}</td><td>${u.how}</td><td class="wrap">${esc(u.row[17])}</td></tr>`);
+  } else if (state.tab === 'review') {
+    head = ['사유', '법인', '전표', '거래처', '회계 품목코드', '품명 및 규격', '수량', '비고'];
+    body = r.review.map(l => `<tr><td class="wrap">${esc(l.why)}</td><td>${ent(l.entity)}</td><td class="code">${l.date}-${l.slip}</td><td>${esc(l.cust)}</td><td class="code">${esc(l.code)}</td><td class="wrap">${esc(l.item)}</td><td class="num">${l.qty.toLocaleString()}</td><td class="wrap">${esc(l.memo)}</td></tr>`);
+  } else if (state.tab === 'newCust') {
+    head = ['거래처코드', '거래처명', '대표자명', '법인'];
+    body = Object.values(r.newCust).map(c => `<tr><td class="code">${esc(c.code)}</td><td>${esc(c.name)}</td><td>${esc(c.rep)}</td><td>${ent(c.entity)}</td></tr>`);
+  } else {
+    head = ['법인', '전표', '거래처', '품목코드', '품명 및 규격', '수량', '비고'];
+    body = r.internal.map(l => `<tr><td>${ent(l.entity)}</td><td class="code">${l.date}-${l.slip}</td><td>${esc(l.cust)}</td><td class="code">${esc(l.code)}</td><td class="wrap">${esc(l.item)}</td><td class="num">${l.qty.toLocaleString()}</td><td class="wrap">${esc(l.memo)}</td></tr>`);
+  }
+  $('tableBox').innerHTML = body.length
+    ? `<table><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${body.join('')}</tbody></table>`
+    : `<p class="note" style="padding:16px">해당하는 줄이 없습니다.</p>`;
+}
+
+function fileStamp() { return `${$('dFrom').value.replace(/-/g, '')}-${$('dTo').value.replace(/-/g, '')}`; }
+
+async function saveXlsx() {
+  const r = state.res; if (!r) return;
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([TEMPLATE, ...r.upload.map(u => u.row.map(v => v === '' ? null : v))]);
+  for (let i = 0; i < r.upload.length; i++) { const c = ws[XLSX.utils.encode_cell({ r: i + 1, c: 0 })]; if (c) { c.t = 's'; c.v = String(c.v); } const k = ws[XLSX.utils.encode_cell({ r: i + 1, c: 2 })]; if (k) { k.t = 's'; k.v = String(k.v); } }
+  XLSX.utils.book_append_sheet(wb, ws, '업로드용');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['사유', '법인', '전표', '거래처', '품목코드', '품명 및 규격', '수량', '비고'], ...r.review.map(l => [l.why, l.entity, `${l.date}-${l.slip}`, l.cust, l.code, l.item, l.qty, l.memo])]), '확인필요');
+  const nc = Object.values(r.newCust);
+  if (nc.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['거래처코드', '거래처명', '대표자명'], ...nc.map(c => [c.code, c.name, c.rep])]), '재고ERP_거래처추가');
+  const data = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const name = `재고ERP_판매업로드_${fileStamp()}.xlsx`;
+  const note = $('exportNote');
+  try {
+    const dl = window.claude?.use ? await window.claude.use('downloads') : null;
+    if (dl) {
+      await dl.save({ filename: name, data: new Blob([data]) });
+      note.textContent = `${name} 저장됨`;
+    } else {
+      note.textContent = '이 화면에서는 파일 저장을 쓸 수 없습니다. 붙여넣기용 복사를 이용하세요.';
+    }
+  } catch (e) {
+    note.textContent = e?.code === 'declined' ? '저장을 취소했습니다.' : '저장하지 못했습니다. 붙여넣기용 복사를 이용하세요.';
+  }
+}
+
+async function copyTsv() {
+  const r = state.res; if (!r) return;
+  const tsv = r.upload.map(u => u.row.map(v => String(v ?? '').replace(/[\t\n]/g, ' ')).join('\t')).join('\n');
+  const note = $('exportNote');
+  try { await navigator.clipboard.writeText(tsv); note.textContent = `${r.upload.length}줄 복사됨 (제목 줄 제외). 웹자료올리기 첫 칸에 붙여넣으세요.`; }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = tsv; ta.setAttribute('aria-label', '복사할 내용');
+    ta.style.cssText = 'width:100%;height:120px;font-family:var(--f-mono);font-size:12px';
+    note.textContent = '자동 복사가 막혀 있습니다. 아래 내용을 전체 선택(Ctrl+A) 후 복사하세요.';
+    note.after(ta); ta.focus(); ta.select();
+  }
+}
+
+/* 이벤트 */
+const drop = $('drop'), input = $('file');
+drop.addEventListener('click', () => input.click());
+drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+input.addEventListener('change', () => { handleFiles([...input.files]); input.value = ''; });
+['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => handleFiles([...e.dataTransfer.files]));
+$('tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) { state.tab = b.dataset.tab; renderTabs(); } });
+$('dFrom').addEventListener('change', run); $('dTo').addEventListener('change', run);
+$('btnSave').addEventListener('click', saveXlsx);
+$('btnCopy').addEventListener('click', copyTsv);
+let clearArmed = false;
+$('clearRef').addEventListener('click', () => {
+  const b = $('clearRef');
+  if (!clearArmed) { clearArmed = true; b.textContent = '정말 지울까요? 한 번 더 누르세요'; setTimeout(() => { clearArmed = false; b.textContent = '기준자료 지우기'; }, 4000); return; }
+  clearArmed = false; b.textContent = '기준자료 지우기';
+  state.ref = { map: null, items: {}, stockItems: null, cust: {}, stockCust: null, meta: {} };
+  try { localStorage.removeItem(LS_KEY); } catch (e) {}
+  renderSlots(); run();
+});
+
+loadRef(); renderSlots();
+</script>
